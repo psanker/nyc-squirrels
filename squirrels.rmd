@@ -5,11 +5,89 @@ editor_options:
   chunk_output_type: inline
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+Helper functions
+```{r}
+compose <- function(f, g, ...) function(x) f(g(x, ...))
+`%.%` <- function(f, g) compose(f, g)
+not <- function(f, ...) compose(`!`, f, ...)
 
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+vlapply <- function(.x, .f, ...) vapply(.x, .f, logical(1), ...)
+viapply <- function(.x, .f, ...) vapply(.x, .f, integer(1), ...)
+vcapply <- function(.x, .f, ...) vapply(.x, .f, character(1), ...)
+vnapply <- function(.x, .f, ...) vapply(.x, .f, numeric(1), ...)
+```
 
 ```{r}
-squirrels <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-10-29/nyc_squirrels.csv")
+library(dplyr)
+library(ggplot2)
+library(magrittr)
+library(readr)
+library(janitor)
+library(broom)
+library(recipes)
+library(rsample)
+```
+
+```{r}
+squirrels <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-10-29/nyc_squirrels.csv")
+
+glimpse(squirrels)
+```
+
+Some diagnostics
+```{r}
+squirrels %>% 
+    tabyl(primary_fur_color)
+
+squirrels %>% 
+    tabyl(highlight_fur_color)
+
+squirrels %>% 
+    tabyl(primary_fur_color, highlight_fur_color)
+
+squirrels %>% 
+    summarise_all(naniar::pct_miss) %>% 
+    print.data.frame()
+```
+
+Prep
+```{r}
+set.seed(0x7abe)
+
+squirrels_fct <- squirrels %>% 
+    mutate_if(is.character, forcats::as_factor) %>% 
+    initial_split()
+
+squirrels_train <- training(squirrels_fct)
+squirrels_test <- testing(squirrels_fct)
+```
+
+Are there indicators that a squirrel will run away?
+```{r}
+run_rec <- recipe(runs_from ~ tail_flags + tail_twitches, data = squirrels_train)
+```
+
+
+Mapping requirements
+```{r}
+library(osmdata)
+library(sf)
+library(ggmap)
+```
+
+Getting Manhattan map
+```{r}
+nyc_query <- getbb("New York City") %>% 
+    opq() %>% 
+    add_osm_feature("highway", "primary")
+
+nyc_roads <- osmdata_sf(nyc_query)
+
+nyc_map <- getbb("New York City") %>% 
+    get_map(maptype = "roadmap", source = "osm")
+```
+
+```{r}
+ggmap(nyc_map)
 ```
 
