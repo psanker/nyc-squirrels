@@ -1,93 +1,196 @@
 ---
-title: "NYC Squirrels"
-output: html_notebook
+title: "NYC Squirrels - DT Tidy Thursday"
+author: "Patrick Anker"
+date: "2019-01-30"
+output: 
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
 editor_options: 
   chunk_output_type: inline
 ---
 
-Helper functions
-```{r}
-compose <- function(f, g, ...) function(x) f(g(x, ...))
-`%.%` <- function(f, g) compose(f, g)
-not <- function(f, ...) compose(`!`, f, ...)
+# Goal
 
-vlapply <- function(.x, .f, ...) vapply(.x, .f, logical(1), ...)
-viapply <- function(.x, .f, ...) vapply(.x, .f, integer(1), ...)
-vcapply <- function(.x, .f, ...) vapply(.x, .f, character(1), ...)
-vnapply <- function(.x, .f, ...) vapply(.x, .f, numeric(1), ...)
-```
+I chose the squirrel data because I had an interest in learning some of the mapping tools available in R, as well as in starting to get familiar with the `tidymodels` suite.
 
-```{r}
-library(dplyr)
-library(ggplot2)
+# Setup
+First things first, load up and attach all of the packages needed in this document.
+```{r packages}
+library(tidyverse)
+library(tidymodels)
 library(magrittr)
-library(readr)
-library(janitor)
-library(broom)
-library(recipes)
-library(rsample)
-```
+library(skimr)
+library(glue)
 
-```{r}
-squirrels <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-10-29/nyc_squirrels.csv")
-
-glimpse(squirrels)
-```
-
-Some diagnostics
-```{r}
-squirrels %>% 
-    tabyl(primary_fur_color)
-
-squirrels %>% 
-    tabyl(highlight_fur_color)
-
-squirrels %>% 
-    tabyl(primary_fur_color, highlight_fur_color)
-
-squirrels %>% 
-    summarise_all(naniar::pct_miss) %>% 
-    print.data.frame()
-```
-
-Prep
-```{r}
-set.seed(0x7abe)
-
-squirrels_fct <- squirrels %>% 
-    mutate_if(is.character, forcats::as_factor) %>% 
-    initial_split()
-
-squirrels_train <- training(squirrels_fct)
-squirrels_test <- testing(squirrels_fct)
-```
-
-Are there indicators that a squirrel will run away?
-```{r}
-run_rec <- recipe(runs_from ~ tail_flags + tail_twitches, data = squirrels_train)
-```
-
-
-Mapping requirements
-```{r}
+# Mapping packages
 library(osmdata)
 library(sf)
-library(ggmap)
+
+theme_set(theme_bw())
 ```
 
-Getting Manhattan map
+And load the squirrel dataset!
 ```{r}
-nyc_query <- getbb("New York City") %>% 
-    opq() %>% 
-    add_osm_feature("highway", "primary")
+squirrels <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-10-29/nyc_squirrels.csv")
+```
 
-nyc_roads <- osmdata_sf(nyc_query)
+# Exploration
 
-nyc_map <- getbb("New York City") %>% 
-    get_map(maptype = "roadmap", source = "osm")
+Before looking at basic summaries of the data, let's insert the data dictionary for these data, supplied [here](https://github.com/rfordatascience/tidytuesday/blob/bf69a07555bd9925ccbf435bd2c211ecea0844b3/data/2019/2019-10-29/readme.md):
+
+|variable                                   |class     |description |
+|:---|:---|:-----------|
+|long                                       |double    | Longitude|
+|lat                                        |double    | Latitude|
+|unique_squirrel_id                         |character | Identification tag for each squirrel sightings. The tag is comprised of "Hectare ID" + "Shift" + "Date" + "Hectare Squirrel Number." |
+|hectare                                    |character | ID tag, which is derived from the hectare grid used to divide and count the park area. One axis that runs predominantly north-to-south is numerical (1-42), and the axis that runs predominantly east-to-west is roman characters (A-I).|
+|shift                                      |character | Value is either "AM" or "PM," to communicate whether or not the sighting session occurred in the morning or late afternoon. |
+|date                                       |double    | Concatenation of the sighting session day and month.|
+|hectare_squirrel_number                    |double    | Number within the chronological sequence of squirrel sightings for a discrete sighting session.|
+|age                                        |character | Value is either "Adult" or "Juvenile."|
+|primary_fur_color                          |character | Value is either "Gray," "Cinnamon" or "Black."|
+|highlight_fur_color                        |character | Discrete value or string values comprised of "Gray," "Cinnamon" or "Black."|
+|combination_of_primary_and_highlight_color |character | A combination of the previous two columns; this column gives the total permutations of primary and highlight colors observed.|
+|color_notes                                |character | Sighters occasionally added commentary on the squirrel fur conditions. These notes are provided here.|
+|location                                   |character | Value is either "Ground Plane" or "Above Ground." Sighters were instructed to indicate the location of where the squirrel was when first sighted.|
+|above_ground_sighter_measurement           |character | For squirrel sightings on the ground plane, fields were populated with a value of “FALSE.”|
+|specific_location                          |character | Sighters occasionally added commentary on the squirrel location. These notes are provided here.|
+|running                                    |logical   | Squirrel was seen running.|
+|chasing                                    |logical   | Squirrel was seen chasing.|
+|climbing                                   |logical   |  Squirrel was seen climbing.|
+|eating                                     |logical   |  Squirrel was seen eating. |
+|foraging                                   |logical   | Squirrel was seen foraging.|
+|other_activities                           |character | Other activities   |
+|kuks                                       |logical   | Squirrel was heard kukking, a chirpy vocal communication used for a variety of reasons.|
+|quaas                                      |logical   | Squirrel was heard quaaing, an elongated vocal communication which can indicate the presence of a ground predator such as a dog.|
+|moans                                      |logical   | Squirrel was heard moaning, a high-pitched vocal communication which can indicate the presence of an air predator such as a hawk.|
+|tail_flags                                 |logical   | Squirrel was seen flagging its tail. Flagging is a whipping motion used to exaggerate squirrel's size and confuse rivals or predators. Looks as if the squirrel is scribbling with tail into the air.|
+|tail_twitches                              |logical   | Squirrel was seen flagging its tail. Flagging is a whipping motion used to exaggerate squirrel's size and confuse rivals or predators. Looks as if the squirrel is scribbling with tail into the air.|
+|approaches                                 |logical   | Squirrel was seen approaching human, seeking food.|
+|indifferent                                |logical   | Squirrel was indifferent to human presence.|
+|runs_from                                  |logical   | Squirrel was seen running from humans, seeing them as a threat.|
+|other_interactions                         |character | Sighter notes on other types of interactions between squirrels and humans.|
+|lat_long                                   |character | Combined lat long|
+|zip_codes                                  |double    | zip codes|
+|community_districts                        |double    | Community districts|
+|borough_boundaries                         |double    | Borough boundaries|
+|city_council_districts                     |double    | City council districts|
+|police_precincts                           |double    | Police precincts |
+
+Simple summmary:
+
+```{r summary}
+skim(squirrels)
+```
+
+Observations:
+* Looks like the date is in milliseoncds from UNIX epoch, so that will need to be fixed.
+* ZIP codes are completely missing, but that's fine since we have lat/long
+
+Since we have longitude and latitude information, where are these observations?
+
+```{r}
+(popo <- squirrels %$% 
+  table(police_precincts))
+
+squirrels %$% 
+  table(city_council_districts)
+```
+
+The vast majority of these observations are from Precinct `r names(popo)[which.max(popo)]`, so these are probably isolated to a single park. Specifically, according to a [CityLab article](https://www.citylab.com/life/2019/06/squirrel-census-results-population-central-park-nyc/592162/) about this dataset, this is wholly within Central Park.
+
+Let's make a scatterplot of the observations.
+```{r}
+ggplot(squirrels) + 
+  geom_point(aes(long, lat))
+```
+
+Each observation was recorded within a hectare block, given by the `hectare` variable.
+
+```{r, echo = FALSE}
+northsouth <- gsub("[[:alpha:]]$", "", squirrels$hectare) %>% 
+  unique() %>% 
+  as.integer()
+```
+
+The codes have two digits and one character, so I'm guessing the digits correspond to the north-south part of the grid since it has `r max(northsouth)` variations. I'll split the hectare codes into a grid.
+```{r}
+squirrels_work <- squirrels %>% 
+  separate(hectare, c("hec_ns", "hec_ew"), sep = 2, remove = FALSE)
+
+squirrels_hectare <- squirrels_work %>% 
+  group_by(hectare) %>% 
+  summarise(avg_long = mean(long), avg_lat = mean(lat), count = n())
+
+squirrels_hectare %>% 
+  ggplot() +
+  geom_point(aes(avg_long, avg_lat, size = count)) +
+  coord_fixed()
+```
+
+There are a few clear clusters of squirrel spotting, which look to correspond with human activity (note the clusters near clear entrances). Let's underlay a map of central park.
+
+```{r}
+bbox <- c(-73.983, 40.76429, -73.9474, 40.8)
+
+central_park_query <- opq(bbox = bbox) %>% 
+  add_osm_feature("leisure", "park") %>% 
+  osmdata_sf()
+
+central_park_poly <- central_park_query$osm_polygons %>% 
+  filter(grepl("central", name, ignore.case = TRUE))
+
+lake_query <- opq(bbox = bbox) %>% 
+  add_osm_feature("natural", "water") %>% 
+  osmdata_sf()
 ```
 
 ```{r}
-ggmap(nyc_map)
+squirrels_hectare %>% 
+  ggplot() +
+  geom_sf(data = central_park_poly, fill = "antiquewhite") +
+  geom_sf(data = lake_query$osm_polygons, fill = "aliceblue") +
+  geom_point(aes(avg_long, avg_lat, size = count)) +
+  coord_sf(xlim = c(bbox[1], bbox[3]), ylim = c(bbox[2], bbox[4]))
+  #   theme(panel.background = element_rect("aliceblue"))
 ```
+
+Note the cluster to the north of "The Lake" (the larger southern lake): this is "The Ramble", a hilly and tree-covered hiking zone that leads to Belvedere Castle.
+
+So kinds of squirrels are there?
+```{r}
+table(squirrels$primary_fur_color)
+```
+We have predominantly grey squirrels, which makes sense. But where are these cinnamon and black squirrels?
+
+```{r}
+fur_colors <- c(Cinnamon = "#E3816D", Gray = "#9F9F9F", Black = "#1F1F1F")
+
+squirrels_work %>% 
+  filter(!is.na(primary_fur_color)) %>% 
+  ggplot() +
+  geom_sf(data = central_park_poly, fill = "antiquewhite") +
+  geom_sf(data = lake_query$osm_polygons, fill = "aliceblue") +
+  geom_point(aes(long, lat, color = primary_fur_color)) +
+  scale_color_manual(values = fur_colors) +
+  coord_sf(xlim = c(bbox[1], bbox[3]), ylim = c(bbox[2], bbox[4]))
+```
+
+It looks like the grey and cinnamon squirrels are fairly uniformly distributed, but the black squirrels are found in little clusters! From here on in, I will create an azimuthal projection of Central Park and rotate a bit to "New York north" so that we can examine distributions of squirrel features without worrying about a squished coordinate system.
+
+```{r}
+central_park_centroid <- central_park_poly %>% 
+  filter(name == "Central Park") %>% 
+  st_geometry() %>% 
+  st_centroid()
+
+central_park_rotated <- central_park_poly %>% 
+  st_set_crs(value = glue("+proj=aeqd +ellps=sphere +lat_0={}"))
+```
+
+
+
+
+
 
